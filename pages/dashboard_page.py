@@ -15,13 +15,10 @@ MODELS_DIR = "models"
 # -----------------------------
 @st.cache_resource
 def load_models():
-    lr = joblib.load(os.path.join(MODELS_DIR, "logistic_model.pkl"))   # Pipeline (classifier)
-    xgb = joblib.load(os.path.join(MODELS_DIR, "xgb_model.pkl"))       # Pipeline (regressor)
-    rf = joblib.load(os.path.join(MODELS_DIR, "rf_model.pkl"))         # Regressor
-    rf_cols = joblib.load(os.path.join(MODELS_DIR, "rf_columns.pkl"))  # list[str]
-    if not isinstance(rf_cols, (list, tuple)):
-        raise ValueError("rf_columns.pkl must be a plain list/tuple of column names (strings).")
-    return lr, xgb, rf, list(rf_cols)
+    lr = joblib.load(os.path.join(MODELS_DIR, "logistic_model.pkl"))  # Pipeline (classifier)
+    xgb = joblib.load(os.path.join(MODELS_DIR, "xgb_model.pkl"))      # Pipeline (regressor)
+    rf = joblib.load(os.path.join(MODELS_DIR, "rf_model.pkl"))        # Pipeline (regressor)
+    return lr, xgb, rf
 
 
 # -----------------------------
@@ -58,17 +55,20 @@ def color_lr_risk(val):
     return ""
 
 
-def predict_all(input_df: pd.DataFrame, lr_model, xgb_model, rf_model, rf_columns):
+def predict_all(input_df: pd.DataFrame, lr_model, xgb_model, rf_model):
+    # Normalize categorical text (match training)
+    for c in ["employment_type", "income_range"]:
+        if c in input_df.columns:
+            input_df[c] = input_df[c].astype(str).str.strip().str.lower()
+
     # LR pipeline -> risk label
     lr_risk = lr_model.predict(input_df)[0]
 
     # XGB pipeline -> score
     xgb_score = float(np.clip(xgb_model.predict(input_df)[0], 0, 100))
 
-    # RF regressor -> dummy + align columns
-    rf_encoded = pd.get_dummies(input_df, drop_first=True)
-    rf_encoded = rf_encoded.reindex(columns=rf_columns, fill_value=0)
-    rf_score = float(np.clip(rf_model.predict(rf_encoded)[0], 0, 100))
+    # RF pipeline -> score (NO rf_columns needed)
+    rf_score = float(np.clip(rf_model.predict(input_df)[0], 0, 100))
 
     return lr_risk, xgb_score, rf_score
 
@@ -128,6 +128,7 @@ with st.sidebar:
 st.markdown("<h1>📊 Credit Analytics Dashboard</h1>", unsafe_allow_html=True)
 st.caption("Sorted by Credit Score (DESC) so Low Risk users appear on top.")
 
+
 # -----------------------------
 # Load dataset
 # -----------------------------
@@ -159,14 +160,16 @@ df_raw = df_raw.sort_values(by="credit_score", ascending=False, na_position="las
 # Add risk_level column
 df_raw["risk_level"] = df_raw["credit_score"].apply(compute_risk_level)
 
+
 # -----------------------------
 # Load models
 # -----------------------------
 try:
-    lr_model, xgb_model, rf_model, rf_columns = load_models()
+    lr_model, xgb_model, rf_model = load_models()
 except Exception as e:
     st.error(f"Model loading error: {e}")
     st.stop()
+
 
 # -----------------------------
 # Metrics
@@ -176,7 +179,6 @@ col1, col2, col3, col4 = st.columns(4)
 overall_avg = float(df_raw["credit_score"].mean(skipna=True))
 total_users = len(df_raw)
 good_users = int((df_raw["credit_score"] >= 70).sum())
-medium_users = int(((df_raw["credit_score"] >= 40) & (df_raw["credit_score"] < 70)).sum())
 high_risk_users = int((df_raw["credit_score"] < 40).sum())
 
 with col1:
@@ -189,6 +191,7 @@ with col4:
     st.metric("High Risk (<40)", f"{high_risk_users}")
 
 st.write("")
+
 
 # -----------------------------
 # Top 10 Users (sorted)
@@ -217,6 +220,7 @@ st.dataframe(
 
 st.write("")
 
+
 # -----------------------------
 # Predictions for Top 5 Users (by score)
 # -----------------------------
@@ -242,7 +246,7 @@ for idx, row in df_predict.iterrows():
     input_df = pd.DataFrame([input_data])
 
     try:
-        lr_risk, xgb_score, rf_score = predict_all(input_df, lr_model, xgb_model, rf_model, rf_columns)
+        lr_risk, xgb_score, rf_score = predict_all(input_df, lr_model, xgb_model, rf_model)
         xgb_score_s = f"{xgb_score:.1f}"
         rf_score_s = f"{rf_score:.1f}"
     except Exception:
@@ -260,6 +264,5 @@ for idx, row in df_predict.iterrows():
 pred_df = pd.DataFrame(pred_rows)
 pred_df.index = range(1, len(pred_df) + 1)
 
-# Color risk level (Low/Medium/High) in predictions table
 styled = pred_df.style.map(color_risk, subset=["Risk Level"]).map(color_lr_risk, subset=["LR Risk"])
 st.dataframe(styled, use_container_width=True)
