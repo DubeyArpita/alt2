@@ -9,31 +9,46 @@ st.set_page_config(page_title="Credit Analytics Dashboard", layout="wide")
 DATA_FILE = "data/dataset.csv"
 MODELS_DIR = "models"
 
+
+# -----------------------------
+# Model loading (cached)
+# -----------------------------
 @st.cache_resource
 def load_models():
-    lr = joblib.load(os.path.join(MODELS_DIR, "logistic_model.pkl"))
-    xgb = joblib.load(os.path.join(MODELS_DIR, "xgb_model.pkl"))
-    rf = joblib.load(os.path.join(MODELS_DIR, "rf_model.pkl"))
-    rf_cols = joblib.load(os.path.join(MODELS_DIR, "rf_columns.pkl"))
+    lr = joblib.load(os.path.join(MODELS_DIR, "logistic_model.pkl"))   # Pipeline (classifier)
+    xgb = joblib.load(os.path.join(MODELS_DIR, "xgb_model.pkl"))       # Pipeline (regressor)
+    rf = joblib.load(os.path.join(MODELS_DIR, "rf_model.pkl"))         # Regressor
+    rf_cols = joblib.load(os.path.join(MODELS_DIR, "rf_columns.pkl"))  # list[str]
     if not isinstance(rf_cols, (list, tuple)):
         raise ValueError("rf_columns.pkl must be a plain list/tuple of column names (strings).")
     return lr, xgb, rf, list(rf_cols)
 
-def predict_all(input_df: pd.DataFrame, lr_model, xgb_model, rf_model, rf_columns):
-    # LR pipeline
-    lr_risk = lr_model.predict(input_df)[0]
 
-    # XGB pipeline
-    xgb_score = float(np.clip(xgb_model.predict(input_df)[0], 0, 100))
+# -----------------------------
+# Helpers
+# -----------------------------
+def compute_risk_level(score):
+    if pd.isna(score):
+        return "Unknown"
+    if score >= 70:
+        return "Low"
+    elif score >= 40:
+        return "Medium"
+    else:
+        return "High"
 
-    # RF dummy+align
-    rf_encoded = pd.get_dummies(input_df, drop_first=True)
-    rf_encoded = rf_encoded.reindex(columns=rf_columns, fill_value=0)
-    rf_score = float(np.clip(rf_model.predict(rf_encoded)[0], 0, 100))
 
-    return lr_risk, xgb_score, rf_score
+def color_risk(val):
+    if val == "Low":
+        return "background-color: #6bcf7f; color: white; font-weight: bold;"
+    elif val == "Medium":
+        return "background-color: #ffd93d; color: black; font-weight: bold;"
+    elif val == "High":
+        return "background-color: #ff6b6b; color: white; font-weight: bold;"
+    return ""
 
-def apply_status_color(val):
+
+def color_lr_risk(val):
     if val in ("High Risk", "High"):
         return "background-color: #ff6b6b; color: white; font-weight: bold;"
     if val in ("Medium Risk", "Medium"):
@@ -42,88 +57,172 @@ def apply_status_color(val):
         return "background-color: #6bcf7f; color: white; font-weight: bold;"
     return ""
 
-# ----- CSS (keep it simpler; you can paste your long CSS if you want) -----
-st.markdown("""
-<style>
-[data-testid="stSidebarNav"] { display: none !important; }
-</style>
-""", unsafe_allow_html=True)
 
-# ----- Sidebar -----
+def predict_all(input_df: pd.DataFrame, lr_model, xgb_model, rf_model, rf_columns):
+    # LR pipeline -> risk label
+    lr_risk = lr_model.predict(input_df)[0]
+
+    # XGB pipeline -> score
+    xgb_score = float(np.clip(xgb_model.predict(input_df)[0], 0, 100))
+
+    # RF regressor -> dummy + align columns
+    rf_encoded = pd.get_dummies(input_df, drop_first=True)
+    rf_encoded = rf_encoded.reindex(columns=rf_columns, fill_value=0)
+    rf_score = float(np.clip(rf_model.predict(rf_encoded)[0], 0, 100))
+
+    return lr_risk, xgb_score, rf_score
+
+
+# -----------------------------
+# Minimal CSS + hide default nav
+# -----------------------------
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebarNav"] { display: none !important; }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# -----------------------------
+# Sidebar Navigation + Actions
+# -----------------------------
 with st.sidebar:
     st.markdown("<h2 style='text-align:center;color:#00D1FF;'>ALTSCORE</h2>", unsafe_allow_html=True)
     st.write("---")
+
     if st.button("🏠 Home", use_container_width=True):
         st.switch_page("app.py")
+
     if st.button("📊 Dashboard", use_container_width=True):
         st.rerun()
+
     if st.button("➕ New Registration", use_container_width=True):
         st.switch_page("pages/Add_user_page.py")
+
     st.write("---")
 
     if st.button("🗑️ Delete Last Entry", use_container_width=True):
         if os.path.exists(DATA_FILE):
-            df = pd.read_csv(DATA_FILE)
-            if len(df) > 0:
-                deleted_user = df.iloc[-1].get("user_id", "Unknown")
-                df = df.iloc[:-1]
-                df.to_csv(DATA_FILE, index=False)
-                st.success(f"✅ Deleted: {deleted_user}")
-                st.rerun()
-            else:
-                st.warning("No entries to delete.")
+            try:
+                df_del = pd.read_csv(DATA_FILE)
+                if not df_del.empty:
+                    deleted_user = df_del.iloc[-1].get("user_id", "Unknown")
+                    df_del = df_del.iloc[:-1]
+                    df_del.to_csv(DATA_FILE, index=False)
+                    st.success(f"✅ Deleted: {deleted_user}")
+                    st.rerun()
+                else:
+                    st.warning("No entries to delete.")
+            except Exception as e:
+                st.error(f"Error deleting entry: {e}")
         else:
             st.warning("No dataset found.")
 
-st.markdown("<h1>📊 Credit Analytics Dashboard</h1>", unsafe_allow_html=True)
 
-# ----- Ensure dataset exists -----
-if not os.path.exists("data"):
-    os.makedirs("data", exist_ok=True)
+# -----------------------------
+# Main Header
+# -----------------------------
+st.markdown("<h1>📊 Credit Analytics Dashboard</h1>", unsafe_allow_html=True)
+st.caption("Sorted by Credit Score (DESC) so Low Risk users appear on top.")
+
+# -----------------------------
+# Load dataset
+# -----------------------------
+os.makedirs("data", exist_ok=True)
+
 if not os.path.exists(DATA_FILE):
     st.warning("📭 Dataset file not found. Please add users first.")
     st.stop()
 
 df_raw = pd.read_csv(DATA_FILE)
+
 if df_raw.empty:
     st.warning("📭 Dataset is empty. Please register some users first.")
     st.stop()
 
-# ----- Load models -----
+# Rename column alt_credit_score -> credit_score
+if "alt_credit_score" in df_raw.columns and "credit_score" not in df_raw.columns:
+    df_raw = df_raw.rename(columns={"alt_credit_score": "credit_score"})
+
+# Ensure credit_score exists
+if "credit_score" not in df_raw.columns:
+    st.error("❌ Column 'credit_score' not found (or 'alt_credit_score' missing).")
+    st.stop()
+
+# Convert + sort DESC
+df_raw["credit_score"] = pd.to_numeric(df_raw["credit_score"], errors="coerce")
+df_raw = df_raw.sort_values(by="credit_score", ascending=False, na_position="last").reset_index(drop=True)
+
+# Add risk_level column
+df_raw["risk_level"] = df_raw["credit_score"].apply(compute_risk_level)
+
+# -----------------------------
+# Load models
+# -----------------------------
 try:
     lr_model, xgb_model, rf_model, rf_columns = load_models()
 except Exception as e:
     st.error(f"Model loading error: {e}")
     st.stop()
 
-# ----- Metrics -----
+# -----------------------------
+# Metrics
+# -----------------------------
 col1, col2, col3, col4 = st.columns(4)
-overall_avg = df_raw["alt_credit_score"].mean() if "alt_credit_score" in df_raw.columns else 0.0
+
+overall_avg = float(df_raw["credit_score"].mean(skipna=True))
+total_users = len(df_raw)
+good_users = int((df_raw["credit_score"] >= 70).sum())
+medium_users = int(((df_raw["credit_score"] >= 40) & (df_raw["credit_score"] < 70)).sum())
+high_risk_users = int((df_raw["credit_score"] < 40).sum())
+
 with col1:
-    st.metric("Avg Score / 100", f"{overall_avg:.1f}")
+    st.metric("Avg Credit Score / 100", f"{overall_avg:.1f}")
 with col2:
-    st.metric("Total Users", f"{len(df_raw)}")
+    st.metric("Total Users", f"{total_users}")
 with col3:
-    good_users = int((df_raw["alt_credit_score"] >= 70).sum())
-    st.metric("Good (≥70)", f"{good_users}")
+    st.metric("Low Risk (≥70)", f"{good_users}")
 with col4:
-    risky_users = int((df_raw["alt_credit_score"] < 50).sum())
-    st.metric("Risky (<50)", f"{risky_users}")
+    st.metric("High Risk (<40)", f"{high_risk_users}")
 
 st.write("")
 
-# ----- Registered users (last 10) -----
-st.subheader("📋 Registered Users (Last 10)")
-display_df = df_raw.tail(10).copy()
+# -----------------------------
+# Top 10 Users (sorted)
+# -----------------------------
+st.subheader("✅ Top Users (Low Risk on Top) — Sorted by Credit Score")
+
+display_df = df_raw.head(10).copy()
 display_df.index = range(1, len(display_df) + 1)
-cols = [c for c in ["user_id","employment_type","income_range","monthly_income","upi_txn_count","alt_credit_score"] if c in display_df.columns]
-st.dataframe(display_df[cols], use_container_width=True)
+
+cols = [
+    "user_id",
+    "employment_type",
+    "income_range",
+    "city_tier",
+    "monthly_income",
+    "upi_txn_count",
+    "credit_score",
+    "risk_level"
+]
+cols = [c for c in cols if c in display_df.columns]
+
+st.dataframe(
+    display_df[cols].style.map(color_risk, subset=["risk_level"]),
+    use_container_width=True
+)
 
 st.write("")
 
-# ----- AI Predictions for latest 5 -----
-st.subheader("🤖 AI Model Predictions (Latest 5 Users)")
-df_predict = df_raw.tail(5).copy()
+# -----------------------------
+# Predictions for Top 5 Users (by score)
+# -----------------------------
+st.subheader("🤖 AI Model Predictions (Top 5 Users by Credit Score)")
+
+df_predict = df_raw.head(5).copy()
 pred_rows = []
 
 for idx, row in df_predict.iterrows():
@@ -144,21 +243,23 @@ for idx, row in df_predict.iterrows():
 
     try:
         lr_risk, xgb_score, rf_score = predict_all(input_df, lr_model, xgb_model, rf_model, rf_columns)
-    except Exception as e:
-        lr_risk, xgb_score, rf_score = "Error", np.nan, np.nan
+        xgb_score_s = f"{xgb_score:.1f}"
+        rf_score_s = f"{rf_score:.1f}"
+    except Exception:
+        lr_risk, xgb_score_s, rf_score_s = "Error", "Error", "Error"
 
     pred_rows.append({
         "User ID": row.get("user_id", f"User_{idx}"),
-        "Actual Score": row.get("alt_credit_score", np.nan),
+        "Credit Score": row.get("credit_score", np.nan),
+        "Risk Level": row.get("risk_level", "Unknown"),
         "LR Risk": lr_risk,
-        "XGB Score": (f"{xgb_score:.1f}" if np.isfinite(xgb_score) else "Error"),
-        "RF Score": (f"{rf_score:.1f}" if np.isfinite(rf_score) else "Error"),
+        "XGB Score": xgb_score_s,
+        "RF Score": rf_score_s,
     })
 
 pred_df = pd.DataFrame(pred_rows)
 pred_df.index = range(1, len(pred_df) + 1)
 
-if "LR Risk" in pred_df.columns:
-    st.dataframe(pred_df.style.map(apply_status_color, subset=["LR Risk"]), use_container_width=True)
-else:
-    st.dataframe(pred_df, use_container_width=True)
+# Color risk level (Low/Medium/High) in predictions table
+styled = pred_df.style.map(color_risk, subset=["Risk Level"]).map(color_lr_risk, subset=["LR Risk"])
+st.dataframe(styled, use_container_width=True)
