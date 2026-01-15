@@ -7,7 +7,6 @@ import streamlit as st
 st.set_page_config(page_title="Register User", layout="centered")
 
 DATA_FILE = "data/dataset.csv"
-REF_FILE = "data/final_dataset_v3.csv"   # optional (for dropdowns)
 MODELS_DIR = "models"
 
 REQUIRED_COLUMNS = [
@@ -33,28 +32,33 @@ def ensure_dataset_file():
     if not os.path.exists(DATA_FILE):
         pd.DataFrame(columns=REQUIRED_COLUMNS).to_csv(DATA_FILE, index=False)
 
-def get_dropdown_options():
-    # Best: derive from reference CSV if present (avoids mismatch)
-    if os.path.exists(REF_FILE):
-        df = pd.read_csv(REF_FILE)
-        emp = sorted(df["employment_type"].dropna().unique().tolist())
-        inc = sorted(df["income_range"].dropna().unique().tolist())
-        tiers = sorted(df["city_tier"].dropna().unique().tolist())
-        # ensure tiers are ints when possible
-        tiers_clean = []
-        for t in tiers:
-            try:
-                tiers_clean.append(int(t))
-            except Exception:
-                pass
-        tiers_clean = sorted(list(set(tiers_clean))) or [1, 2, 3]
-        return emp, inc, tiers_clean
+def get_dropdown_options_from_dataset():
+    # If dataset.csv already has rows, use it to avoid mismatched categories
+    if os.path.exists(DATA_FILE):
+        try:
+            df = pd.read_csv(DATA_FILE)
+            if not df.empty:
+                emp = sorted(df["employment_type"].dropna().unique().tolist()) if "employment_type" in df.columns else []
+                inc = sorted(df["income_range"].dropna().unique().tolist()) if "income_range" in df.columns else []
+                tiers_raw = df["city_tier"].dropna().unique().tolist() if "city_tier" in df.columns else []
+                tiers = []
+                for t in tiers_raw:
+                    try:
+                        tiers.append(int(t))
+                    except Exception:
+                        pass
+                tiers = sorted(list(set(tiers)))
+                if emp and inc and tiers:
+                    return emp, inc, tiers
+        except Exception:
+            pass
 
-    # Fallback (use the categories you used in training dataset)
+    # Fallback: training categories (use these if dataset is empty/new)
     employment_options = ["contract", "gig", "salaried", "self_employed", "student", "unemployed"]
     income_options = ["0-15000", "10000-30000", "15000-30000", "20000-100000", "25000-80000", "30000-50000"]
     city_tier_options = [1, 2, 3]
     return employment_options, income_options, city_tier_options
+
 
 def predict_all(input_data: dict, lr_model, xgb_model, rf_model, rf_columns):
     input_df = pd.DataFrame([input_data])
@@ -111,7 +115,7 @@ except Exception as e:
     st.error(f"Model loading error: {e}")
     st.stop()
 
-employment_options, income_options, city_tier_options = get_dropdown_options()
+employment_options, income_options, city_tier_options = get_dropdown_options_from_dataset()
 
 # ---------- Sidebar ----------
 with st.sidebar:
