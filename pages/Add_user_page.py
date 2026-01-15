@@ -54,7 +54,7 @@ def get_dropdown_options_from_dataset():
             pass
 
     # Fallback: training categories (use these if dataset is empty/new)
-    employment_options = ["contract", "gig", "salaried", "self_employed", "student", "unemployed"]
+    employment_options = ["Gig", "Salaried", "Self_employed"]
     income_options = ["0-15000", "10000-30000", "15000-30000", "20000-100000", "25000-80000", "30000-50000"]
     city_tier_options = [1, 2, 3]
     return employment_options, income_options, city_tier_options
@@ -134,7 +134,7 @@ with st.form("user_registration_form"):
     col1, col2 = st.columns(2)
 
     with col1:
-        user_id = st.text_input("User ID *", placeholder="Enter unique User ID")
+        # user_id = st.text_input("User ID *", placeholder="Enter unique User ID")
         employment_type = st.selectbox("Employment Type *", employment_options)
         income_range = st.selectbox("Income Range (Monthly) *", income_options)
         city_tier = st.selectbox("City Tier *", city_tier_options)
@@ -144,7 +144,7 @@ with st.form("user_registration_form"):
         )
 
     with col2:
-        num_bank_accounts = st.number_input("Number of Bank Accounts *", min_value=1, max_value=10, value=1, step=1)
+        num_bank_accounts = st.number_input("Number of Bank Accounts *", min_value=1, max_value=15, value=1, step=1)
         monthly_income = st.number_input("Monthly Income (₹) *", min_value=0, value=30000, step=1000)
 
         # rent_paid_on_time in your dataset is numeric (0..1). Use slider for best match.
@@ -155,7 +155,7 @@ with st.form("user_registration_form"):
 
     col3, col4 = st.columns(2)
     with col3:
-        avg_month_end_balance = st.number_input("Average Month-End Balance (₹) *", min_value=0.0, value=5000.0, step=500.0)
+        avg_month_end_balance = st.number_input("Average Month-End Balance (₹) *", min_value=0.0, value=5000.0, step=100.0)
     with col4:
         overdraft_event = st.selectbox("Overdraft Availed? *", ["No", "Yes"])
 
